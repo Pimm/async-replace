@@ -44,13 +44,14 @@ exports.replaceAsync = function replaceAsync(regularExpressionOrSubstring, deter
 			matchInformationArrays[0]["index"] = index;
 		}
 	}
-	// If there were no matches, directly call the callback passing the input.
+	// If there were no matches, call the callback passing the untampered input.
 	if (0 === matchInformationArrays.length) {
-		callback(null, String(this));
+		process.nextTick(callback.bind(this, null, String(this)));
 		return;
 	}
 	const input = String(this);
 	// Call the passed determineReplacement function for every match, collecting a replacement for every one of them.
+	var thrownError = null;
 	mapAsync(matchInformationArrays, function collectReplacement(matchInformation, callback) {
 		// The determineReplacement function will be called with the following arguments:
 		// 		match, (submatch,)n, offset, input, callback
@@ -62,33 +63,42 @@ exports.replaceAsync = function replaceAsync(regularExpressionOrSubstring, deter
 		// depending on whether regularExpressionOrSubstring is a regular expression or not), which is a good thing.
 		try {
 			determineReplacement.apply(this, matchInformation);
-		// Should this call throw an error (instead of passing an error to its callback, as it should), catch it and pass it to the
-		// callback.
+		// Should the call above throw an error (as opposed to passing an error to its callback), catch it and try to pass it to
+		// the callback. This might fail, as the determineReplacement call above might've already called the callback. In such
+		// case, save the error using the thrownError variable.
 		} catch (error) {
-			callback(error);
+			try {
+				callback(error);
+			} catch (innerError) {
+				thrownError = error;
+			}
 		}
-	}, function replaceAll(error, replacements) {
-		// If an error was provided, at least one of the calls to determineReplacement provided an error. Stop.
-		if (null !== error) {
-			callback(error);
-			return;
-		}
-		// For every match, add the substring starting at the pointer and ending where the match starts + the appropriate
-		// replacement to the result buffer.
-		var pointer = 0;
-		const resultBuffer = matchInformationArrays.map(function replace(matchInformation, matchIndex) {
-			// Add the substring starting at the pointer and ending where the match starts.
-			const result = this.substr(pointer, matchInformation["index"] - pointer) +
-			// Move the pointer.
-				(pointer = matchInformation["index"] + matchInformation[0].length,
-			// Add the appropriate replacement.
-				replacements[matchIndex]);
-			return result;
-		}, input);
-		// Finally, add the substring starting at the pointer, which is now at the end of the last match, ending at the end of the
-		// input.
-		resultBuffer.push(input.substr(pointer));
-		// Call the callback.
-		callback(null, resultBuffer.join(""));
+	}, function replaceAllOnNextTick(error, replacements) {
+		// Do the rest on the next tick, to both ensure this method is always asynchronous as well as ensure that if the throwError
+		// variable is to be set, it will be ready at the time it is compared to null below.
+		process.nextTick(function replaceAll() {
+			// If an error exists, at least one of the calls to determineReplacement provided an error somehow. Stop.
+			if (null !== error || null !== thrownError) {
+				callback(null !== error ? error : thrownError);
+				return;
+			}
+			// For every match, add the substring starting at the pointer and ending where the match starts + the appropriate
+			// replacement to the result buffer.
+			var pointer = 0;
+			const resultBuffer = matchInformationArrays.map(function replace(matchInformation, matchIndex) {
+				// Add the substring starting at the pointer and ending where the match starts.
+				const result = this.substr(pointer, matchInformation["index"] - pointer) +
+				// Move the pointer.
+					(pointer = matchInformation["index"] + matchInformation[0].length,
+				// Add the appropriate replacement.
+					replacements[matchIndex]);
+				return result;
+			}, input);
+			// Finally, add the substring starting at the pointer, which is now at the end of the last match, ending at the end of
+			// the input.
+			resultBuffer.push(input.substr(pointer));
+			// Call the callback.
+			callback(null, resultBuffer.join(""));
+		});
 	});
 }
