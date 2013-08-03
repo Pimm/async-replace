@@ -18,17 +18,7 @@
  * "GPL"), or the GNU Lesser General Public License Version 3 or later (the "LGPL"), in which case the provisions of the GPL or
  * the LGPL are applicable instead of those above.
  */
-const forEachAsync = require("async").each;
-/**
- * Adds the passed value to the passed target array, and then calls the callback at "this".
- */
-function pushToTarget(target, error, value) {
-	// If an error is provided, the following line will add garbage to the target array. This isn't a problem, because the
-	// callback should assume the array is garbage if an error was passed to it anyway.
-	target.push(value);
-	// "this" is the callback.
-	this(error);
-}
+const mapAsync = require("async").map;
 exports.replaceAsync = function replaceAsync(regularExpressionOrSubstring, determineReplacement, callback) {
 	const matchInformationArrays = [];
 	// If the first argument is a regular expression, use the exec method of that argument to determine the matches.
@@ -61,15 +51,15 @@ exports.replaceAsync = function replaceAsync(regularExpressionOrSubstring, deter
 	}
 	const input = String(this);
 	// Call the passed determineReplacement function for every match, collecting a replacement for every one of them.
-	const replacements = [];
-	forEachAsync(matchInformationArrays, function callDetermineReplacement(matchInformation, callback) {
+	mapAsync(matchInformationArrays, function collectReplacement(matchInformation, callback) {
 		// The determineReplacement function will be called with the following arguments:
 		// 		match, (submatch,)n, offset, input, callback
 		// Where "match" is the entire matched substring and the "substring" arguments are the parenthesised submatches. These are
 		// already present in the matchInformation argument. The "offset" ‒ the offset (in characters) of the entire matched
-		// substring in the input ‒; the "input" and the callback are pushed.
-		matchInformation.push(matchInformation["index"], input, pushToTarget.bind(callback, replacements));
-		// The apply seems to ignore matchInformation["index"] and matchInformation["input"], which is a good thing.
+		// substring in the input; the "input" and the callback are pushed.
+		matchInformation.push(matchInformation["index"], input, callback);
+		// The apply seems to ignore matchInformation["index"] (which exists) and matchInformation["input"] (which might exist,
+		// depending on whether regularExpressionOrSubstring is a regular expression or not), which is a good thing.
 		try {
 			determineReplacement.apply(this, matchInformation);
 		// Should this call throw an error (instead of passing an error to its callback, as it should), catch it and pass it to the
@@ -77,7 +67,7 @@ exports.replaceAsync = function replaceAsync(regularExpressionOrSubstring, deter
 		} catch (error) {
 			callback(error);
 		}
-	}, function replaceAll(error) {
+	}, function replaceAll(error, replacements) {
 		// If an error was provided, at least one of the calls to determineReplacement provided an error. Stop.
 		if (null !== error) {
 			callback(error);
